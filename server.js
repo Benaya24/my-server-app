@@ -1,94 +1,62 @@
 const axios = require("axios");
 const express = require("express");
+const crypto = require("crypto"); // ייבוא ספריית הקריפטוגרפיה של Node.js
 const app = express();
 const cors = require("cors");
 
 app.use(cors());
 
-// קריאת המפתחות הסודיים ממשתני הסביבה שהגדרת ב-Render
+// קריאת המפתחות הסודיים ממשתני הסביבה
 const appKey = process.env.ALIEXPRESS_APP_KEY;
 const appSecret = process.env.ALIEXPRESS_APP_SECRET;
 
-// --- הגדרת כתובות ה-API ---
-const AUTH_API_URL = "https://api-sg.aliexpress.com/sync/v1/auth/token/create"; // הכתובת לקבלת הטוקן
-const PRODUCT_API_URL =
-  "https://api-sg.aliexpress.com/sync/v1/products/aliexpress.local.service.product.query"; // הכתובת לקבלת המוצר
+// --- כתובות ה-API ---
+const AUTH_API_URL = "https://api-sg.aliexpress.com/sync/v1/auth/token/create";
 
-// פונקציית עזר לקבלת Access Token
-async function getAccessToken() {
-  try {
-    // כאן תצטרך להתאים את הפרמטרים לבקשת הטוקן לפי התיעוד של אליאקספרס
-    // זוהי דוגמה כללית
-    const response = await axios.post(AUTH_API_URL, {
-      app_key: appKey,
-      app_secret: appSecret,
-      // ...פרמטרים נוספים כמו code או grant_type אם נדרש...
-    });
-    // החזרת הטוקן מהתשובה
-    return response.data.access_token;
-  } catch (error) {
-    console.error(
-      "Failed to get access token:",
-      error.response ? error.response.data : error.message
-    );
-    throw new Error("Could not authenticate with AliExpress");
+// --- פונקציה ליצירת חתימה דיגיטלית ---
+function createSignature(params, secret) {
+  const sortedKeys = Object.keys(params).sort();
+  let signString = "";
+  for (const key of sortedKeys) {
+    if (params[key] !== undefined && params[key] !== null) {
+      signString += key + params[key];
+    }
   }
+  const hmac = crypto.createHmac("sha256", secret);
+  hmac.update(signString);
+  return hmac.digest("hex").toUpperCase();
 }
 
-// הניתוב הראשי לקבלת פרטי מוצר
-app.get("/api/get-product-info/:productId", async (req, res) => {
-  const productIdToFetch = req.params.productId;
+// --- ניתוב לקבלת Access Token ---
+app.get("/api/get-access-token", async (req, res) => {
+  // את ה-code הזה צריך לקבל באופן דינמי, אך לצורך הבדיקה נשתמש בקוד שהיה לך
+  const authCode = "0_2DL4DV3jcU1UOT7WGI1A4rY91";
+
+  // הרכבת הפרמטרים לבקשה
+  let params = {
+    app_key: appKey,
+    code: authCode,
+    sign_method: "sha256",
+    timestamp: Date.now().toString(),
+  };
+
+  // יצירת החתימה והוספתה לפרמטרים
+  params.sign = createSignature(params, appSecret);
 
   try {
-    // שלב 1: קבל Access Token עדכני
-    // הערה: באפליקציה מתקדמת, היית שומר את הטוקן ומרענן אותו רק כשפג תוקפו.
-    // כרגע, לצורך הפשטות, נקבל טוקן חדש בכל בקשה.
-    // const accessToken = await getAccessToken(); // כרגע נשתמש בטוקן הידני כי תהליך קבלת הטוקן מורכב יותר
-    const accessToken =
-      "50000601c30atpedfgu3LVvik87Ixlsvle3mSoB7701ceb156fPunYZ43GBg";
-
-    // שלב 2: השתמש בטוקן כדי לבקש את פרטי המוצר
-    const apiParameters = {
-      channel_seller_id: "2678881002", // החלף במזהה המוכר שלך
-      product_id: productIdToFetch,
-      channel: "AE_GLOBAL",
-    };
-
-    const productResponse = await axios.post(PRODUCT_API_URL, apiParameters, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    // חילוץ הנתונים מהתשובה
-    const productDetails =
-      productResponse.data?.aliexpress_local_service_product_query_response
-        ?.local_service_product_dto;
-
-    if (!productDetails) {
-      return res
-        .status(404)
-        .json({ message: "Product data not found in API response" });
-    }
-
-    const title = productDetails.title;
-    const imageUrl = productDetails.multimedia.media_list[0].url;
-    const price = productDetails.product_property_list[0].sku_price;
-
-    // שלב 3: הוסף את קישור השותפים ושלח את התשובה
-    res.json({
-      product_name: title,
-      price: price,
-      image_url: imageUrl,
-      affiliate_link: "https://s.click.aliexpress.com/e/_opO09DY", //  <-- הוספנו את קישור השותפים כאן
-    });
+    // שליחת הבקשה עם הפרמטרים כ-Query Parameters
+    const response = await axios.get(AUTH_API_URL, { params });
+    res.json(response.data);
   } catch (error) {
-    res
-      .status(500)
-      .json({ message: "A general error occurred", details: error.message });
+    console.error(
+      "Error getting access token:",
+      error.response ? error.response.data : error.message
+    );
+    res.status(500).json({ message: "Failed to get access token" });
   }
 });
+
+// ... הוסף כאן את הניתוב לקבלת פרטי מוצר מאוחר יותר ...
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
